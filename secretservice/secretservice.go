@@ -29,41 +29,67 @@ var (
 	baseURL string
 )
 
-var (
-	entryFmt         string
-	regexpFieldRange = regexp.MustCompile(`bytes=(\d+)-(\d*)`)
-)
+var regexpFieldRange = regexp.MustCompile(`bytes=(\d+)-(\d*)`)
 
 func MediaStream(c *gin.Context) {
 	channel, err := exp.GetChannel(c, api, cfg.SecretChannelID)
 	if err != nil {
+		c.JSON(http.StatusBadRequest, err)
+		return
+	}
+	filename := c.Param(`filename`)
+	_, tag, ok := strings.Cut(filename, `_`)
+	if !ok {
+		err = fmt.Errorf("strings.Cut(filename, `_`)")
 		c.JSON(http.StatusBadRequest, gin.H{`error`: err.Error()})
 		return
 	}
-	docs, err := exp.GetDoc(c, api, &tg.MessagesGetHistoryRequest{
+	req := tg.MessagesSearchRequest{
 		Peer: &tg.InputPeerChannel{
 			ChannelID:  channel.ID,
 			AccessHash: channel.AccessHash,
 		},
-		Limit: 1,
-	})
+		Q:      `_` + tag + `.ts`,
+		Limit:  1,
+		Filter: &tg.InputMessagesFilterEmpty{},
+	}
+
+	MessageInterface, err := api.MessagesSearch(ctx, &req)
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{`error`: err.Error()})
 		return
 	}
-	if len(docs) == 0 {
-		c.JSON(http.StatusBadRequest, fmt.Errorf(`len(docs) == 0`))
+
+	m, ok := MessageInterface.(*tg.MessagesChannelMessages)
+	if !ok {
+		err = fmt.Errorf(`MessageInterface.(*tg.MessagesChannelMessages) !ok`)
+		c.JSON(http.StatusBadRequest, gin.H{`error`: err.Error()})
 		return
 	}
-	doc := docs[0]
+	msgList := m.GetMessages()
+	if len(msgList) != 1 {
+		err = fmt.Errorf(`len(m.Messages) != 1`)
+		c.JSON(http.StatusBadRequest, gin.H{`error`: err.Error()})
+		return
+	}
+	msg := msgList[0]
+	doc, ok := exp.GetDocFromMessage(msg)
+	if !ok {
+		err = fmt.Errorf(`msg.(*tg.Document) !ok`)
+		c.JSON(http.StatusBadRequest, gin.H{`error`: err.Error()})
+		return
+	}
+
 	var start, end int64
 	if fieldRange := c.GetHeader(`Range`); fieldRange == `` {
-		c.JSON(http.StatusRequestedRangeNotSatisfiable, "fieldRange == `` ")
+		err = fmt.Errorf("fieldRange == `` ")
+		c.JSON(http.StatusRequestedRangeNotSatisfiable, gin.H{`error`: err.Error()})
 		return
 	} else {
 		submatch := regexpFieldRange.FindStringSubmatch(fieldRange)
 		if len(submatch) < 3 {
-			c.JSON(http.StatusRequestedRangeNotSatisfiable, "fieldRange == `` ")
+			err = fmt.Errorf("fieldRange == `` ")
+			c.JSON(http.StatusRequestedRangeNotSatisfiable, gin.H{`error`: err.Error()})
 			return
 		}
 		startInt, err := strconv.Atoi(submatch[1])
@@ -112,8 +138,6 @@ func MediaStream(c *gin.Context) {
 		fmt.Fprintln(gin.DefaultWriter, gin.H{`error`: err.Error()})
 		return
 	}
-
-	fmt.Fprintln(gin.DefaultWriter, `done`)
 }
 
 func fileNameExt(s string) (str string, err error) {
@@ -144,7 +168,7 @@ func ListPlaylist(c *gin.Context) {
 	limit := 10
 
 	if i, err := strconv.Atoi(c.Param(`index`)); err != nil {
-		c.JSON(http.StatusBadRequest, err)
+		c.JSON(http.StatusBadRequest, gin.H{`error`: err.Error()})
 		return
 	} else if i > 0 {
 		index = i
@@ -152,7 +176,7 @@ func ListPlaylist(c *gin.Context) {
 	}
 	channel, err := exp.GetChannel(c, api, cfg.SecretChannelID)
 	if err != nil {
-		c.JSON(http.StatusBadRequest, err)
+		c.JSON(http.StatusBadRequest, gin.H{`error`: err.Error()})
 		return
 	}
 	req := tg.MessagesSearchRequest{
@@ -167,9 +191,10 @@ func ListPlaylist(c *gin.Context) {
 
 	MessageInterface, err := api.MessagesSearch(ctx, &req)
 	if err != nil {
-		c.JSON(http.StatusBadRequest, err)
+		c.JSON(http.StatusBadRequest, gin.H{`error`: err.Error()})
 		return
 	}
+
 	arr := MessageInterface.(*tg.MessagesChannelMessages)
 	if len(arr.Messages) == 0 {
 		err = fmt.Errorf(`len(arr.Messages) == 0`)
@@ -218,6 +243,8 @@ func ListPlaylist(c *gin.Context) {
 			}
 			filename = common.CleanString(filename)
 			filename = strings.TrimSpace(filename)
+
+			entryFmt := "#EXTINF:-1,%s\n" + baseURL + "/media/%d/" + attrFileName.FileName + "\n"
 			fmt.Fprintf(&buff, entryFmt, filename, doc.ID)
 			break
 		}
@@ -231,6 +258,13 @@ func ListPlaylist(c *gin.Context) {
 }
 
 func GetMasterPlaylist(c *gin.Context) {
+	filaname := c.Param(`filename`)
+	_, tag, ok := strings.Cut(filaname, `_`)
+	if !ok {
+		err := fmt.Errorf(`strings.Cut(filename, %q, %q) !ok`, " ", "")
+		c.JSON(http.StatusBadRequest, gin.H{`error`: err.Error()})
+		return
+	}
 	channel, err := exp.GetChannel(c, api, cfg.SecretChannelID)
 	if err != nil {
 		c.JSON(http.StatusBadRequest, err)
@@ -241,7 +275,7 @@ func GetMasterPlaylist(c *gin.Context) {
 			ChannelID:  channel.ID,
 			AccessHash: channel.AccessHash,
 		},
-		Q:      `_preview.m3u8`,
+		Q:      `_` + tag + `.m3u8`,
 		Limit:  1,
 		Filter: &tg.InputMessagesFilterEmpty{},
 	}
@@ -261,7 +295,6 @@ func GetMasterPlaylist(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, fmt.Errorf(`arr.Messages[0].(*tg.Document) !ok`))
 		return
 	}
-	fmt.Fprintln(gin.DefaultWriter, doc)
 
 	location := &tg.InputDocumentFileLocation{
 		ID:            doc.GetID(),
@@ -303,17 +336,29 @@ func GetMasterPlaylist(c *gin.Context) {
 	}()
 }
 
+func mediaHandler(c *gin.Context) {
+	if strings.HasSuffix(c.Request.URL.Path, `.m3u8`) {
+		GetMasterPlaylist(c)
+		return
+	}
+
+	if strings.HasSuffix(c.Request.URL.Path, `.ts`) {
+		MediaStream(c)
+		return
+	}
+	err := fmt.Errorf(`strings.HasSuffix(c.Request.URL.Path, ?) !ok`)
+	c.JSON(http.StatusBadRequest, gin.H{`error`: err.Error()})
+}
+
 func Add(engin *gin.Engine, _api *tg.Client, ctxT context.Context, _cfg *config.Config) (err error) {
 	api = _api
 	ctx = ctxT
 	cfg = _cfg
 	baseURL = `http://` + cfg.Addr + `:` + cfg.Port
-	entryFmt = "#EXTINF:-1,%s\n" + baseURL + "/media/%d/master.m3u8\n"
 
 	// baseURL = `http://` + cfg.Addr + `:` + cfg.Port
 
 	engin.GET(`/list/:tag/index/:index/list.m3u`, ListPlaylist)
-	engin.GET(`/media/:docID/master.m3u8`, GetMasterPlaylist)
-	engin.GET(`/media/:docID/:filename.ts`, MediaStream)
+	engin.GET(`/media/:docID/:filename`, mediaHandler)
 	return
 }

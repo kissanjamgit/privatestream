@@ -159,7 +159,36 @@ func GetDocFromMessage(m tg.MessageClass) (doc *tg.Document, ok bool) {
 	return
 }
 
-func GetDoc(ctx context.Context, api *tg.Client, req *tg.MessagesGetHistoryRequest) (docs []*tg.Document, err error) {
+func DocSearch(ctx context.Context, api *tg.Client, channel *tg.Channel, req *tg.ChannelsGetMessagesRequest) (docList []*tg.Document, err error) {
+	res, err := api.ChannelsGetMessages(ctx, req)
+	if err != nil {
+		return
+	}
+	messagesMessages, ok := res.(*tg.MessagesMessages)
+	if !ok {
+		return
+	}
+
+	if len(messagesMessages.GetMessages()) == 0 {
+		return
+	}
+
+	for _, item := range messagesMessages.Messages {
+		doc, ok := GetDocFromMessage(item)
+		if !ok {
+			continue
+		}
+		docList = append(docList, doc)
+	}
+	// doc, ok :=  GetDocFromMessage(msgClass)
+	// // api.sear
+	// if err != nil {
+	// 	return
+	// }
+	return
+}
+
+func DocGet(ctx context.Context, api *tg.Client, req *tg.MessagesGetHistoryRequest) (docs []*tg.Document, err error) {
 	msg, err := api.MessagesGetHistory(ctx, req)
 	if err != nil {
 		return
@@ -202,7 +231,6 @@ func GetDoc(ctx context.Context, api *tg.Client, req *tg.MessagesGetHistoryReque
 		// 	return
 		//
 		// }
-		return
 
 	}
 	return
@@ -226,33 +254,32 @@ func GetChannel(ctx context.Context, api *tg.Client, channelID int64) (channel *
 }
 
 func GetData(ctx context.Context, pw *io.PipeWriter, offset int64, length int64, fileSize int64, api *tg.Client, location *tg.InputDocumentFileLocation) error {
-	const limitMax = 512 * 1024
+	const tgBlockAlign = 524288
+	const fixedLimit = 524288
 	defer pw.Close()
 
-	// Guardrail 1: If client asks for an offset completely beyond the file, exit early
-	if offset >= fileSize {
+	if offset >= fileSize || length <= 0 {
 		return nil
 	}
 
-	currentOffset := (offset / limitMax) * limitMax
-	skip := offset - currentOffset
-
-	logicalOffset := offset
 	endOffset := offset + length
-
-	// Guardrail 2: Ensure we never try to read past the actual physical file end
 	if endOffset > fileSize {
 		endOffset = fileSize
 	}
 
-	for logicalOffset < endOffset {
-		// Guardrail 3: If our grid-aligned pointer somehow lands right at or past the file size,
-		// stop immediately before calling Telegram to prevent OFFSET_INVALID
+	// 🚀 Snap DOWN to the nearest clean 512KB block boundary
+	currentOffset := (offset / tgBlockAlign) * tgBlockAlign
+
+	// Calculate how many leading bytes we must discard from our first 512KB chunk
+	skip := offset - currentOffset
+
+	for currentOffset < endOffset {
 		if currentOffset >= fileSize {
 			break
 		}
 
-		limit := limitMax
+		// 🚀 Always pull the maximum allowed block size for top performance
+		limit := fixedLimit
 
 		req := &tg.UploadGetFileRequest{
 			Location: location,
@@ -275,25 +302,29 @@ func GetData(ctx context.Context, pw *io.PipeWriter, offset int64, length int64,
 			break
 		}
 
-		// Guardrail 4: Secure the slice window against unexpected short payloads
-		if skip > int64(len(payload)) {
-			break
+		// Determine our slicing indices relative to the current 512KB block
+		chunkStart := skip
+		chunkEnd := int64(len(payload))
+
+		// If the current block extends past what ffplay needs, trim the trailing edge
+		bytesAvailableFromCurrent := currentOffset + chunkEnd
+		if bytesAvailableFromCurrent > endOffset {
+			chunkEnd -= (bytesAvailableFromCurrent - endOffset)
 		}
 
-		chunk := payload[skip:]
-		skip = 0 // Used once, clear it
-
-		// Truncate trailing extra data from the grid block
-		if int64(len(chunk)) > (endOffset - logicalOffset) {
-			chunk = chunk[:endOffset-logicalOffset]
+		// Safe in-bounds slice verification
+		if chunkStart < chunkEnd && chunkStart < int64(len(payload)) {
+			chunk := payload[chunkStart:chunkEnd]
+			if _, err := pw.Write(chunk); err != nil {
+				return errors.Wrap(err, "failed writing chunk to pipe response")
+			}
 		}
 
-		if _, err := pw.Write(chunk); err != nil {
-			return errors.Wrap(err, "failed writing chunk to pipe response")
-		}
-
-		logicalOffset += int64(len(chunk))
+		// Advance currentOffset by the full block size Telegram provided
 		currentOffset += int64(len(payload))
+
+		// Clear skip so it doesn't affect subsequent 512KB blocks
+		skip = 0
 	}
 
 	return nil

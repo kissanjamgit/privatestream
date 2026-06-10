@@ -15,7 +15,7 @@ const (
 	// port = `30443`
 	port = `54821`
 
-	secretKeyURI    = `https://raw.githubusercontent.com/kissanjamgit/private_stream/main/key/enc.key`
+	secretKeyURI    = `https://raw.githubusercontent.com/kissanjamgit/privatestream/master/key/enc.key`
 	secretChannelID = 3937047128
 
 	sessionStorage = `session.json`

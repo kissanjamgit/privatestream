@@ -17,17 +17,14 @@ import (
 	"github.com/kissanjamgit/private_stream/secretservice"
 )
 
-var (
-	ctx      context.Context
-	codeHook = auth.CodeAuthenticatorFunc(func(ctx context.Context, sentCode *tg.AuthSentCode) (string, error) {
-		fmt.Print(`Enter Code`)
-		code, err := bufio.NewReader(os.Stdin).ReadString('\n')
-		if err != nil {
-			return "", err
-		}
-		return strings.TrimSpace(code), nil
-	})
-)
+var codeHook = auth.CodeAuthenticatorFunc(func(ctx context.Context, sentCode *tg.AuthSentCode) (string, error) {
+	fmt.Print(`Enter Code`)
+	code, err := bufio.NewReader(os.Stdin).ReadString('\n')
+	if err != nil {
+		return "", err
+	}
+	return strings.TrimSpace(code), nil
+})
 
 // var targetChannelID int64 = 1786343615
 
@@ -36,7 +33,7 @@ func block() (err error) {
 	if err != nil {
 		return
 	}
-	ctx = context.Background()
+	ctx := context.Background()
 	opts := telegram.Options{
 		SessionStorage: &telegram.FileSessionStorage{
 			Path: config.SessionStorage,
@@ -49,8 +46,9 @@ func block() (err error) {
 		if err != nil {
 			return
 		}
+		api := client.API()
 		engin := gin.New()
-		err = secretservice.Add(engin, client.API(), ctx, config)
+		err = secretservice.Add(engin, api, ctx, config)
 		keyredirect.Add(engin, config)
 
 		engin.Run(config.Addr + `:` + config.Port)

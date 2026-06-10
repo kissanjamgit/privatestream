@@ -9,7 +9,7 @@ import (
 )
 
 func Add(engin *gin.Engine, cfg *config.Config) {
-	engin.GET("/enc.key", func(c *gin.Context) {
+	engin.GET("/key/enc.key", func(c *gin.Context) {
 		c.Redirect(http.StatusTemporaryRedirect, cfg.SecretKeyURI)
 	})
 }
