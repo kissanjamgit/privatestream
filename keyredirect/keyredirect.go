@@ -5,7 +5,7 @@ import (
 	"net/http"
 
 	"github.com/gin-gonic/gin"
-	"github.com/kissanjamgit/private_stream/config"
+	"github.com/kissanjamgit/privatestream/config"
 )
 
 func Add(engin *gin.Engine, cfg *config.Config) {

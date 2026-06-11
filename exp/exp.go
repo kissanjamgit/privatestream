@@ -159,33 +159,41 @@ func GetDocFromMessage(m tg.MessageClass) (doc *tg.Document, ok bool) {
 	return
 }
 
-func DocSearch(ctx context.Context, api *tg.Client, channel *tg.Channel, req *tg.ChannelsGetMessagesRequest) (docList []*tg.Document, err error) {
+func DocSearch(ctx context.Context, api *tg.Client, req *tg.ChannelsGetMessagesRequest) (docList []*tg.Document, err error) {
 	res, err := api.ChannelsGetMessages(ctx, req)
 	if err != nil {
-		return
+		return nil, err
 	}
-	messagesMessages, ok := res.(*tg.MessagesMessages)
-	if !ok {
-		return
+	// fmt.Fprintf(gin.DefaultWriter, "res: %v\n", res)
+
+	var messages []tg.MessageClass
+
+	// Type switch to handle both standard chats and channels/supergroups
+	switch m := res.(type) {
+	case *tg.MessagesChannelMessages:
+		messages = m.Messages
+	case *tg.MessagesMessages:
+		messages = m.Messages
+	case *tg.MessagesMessagesNotModified:
+		return nil, fmt.Errorf("messages not modified on server")
+	default:
+		return nil, fmt.Errorf("unexpected response type from Telegram: %T", res)
 	}
 
-	if len(messagesMessages.GetMessages()) == 0 {
-		return
+	if len(messages) == 0 {
+		return nil, fmt.Errorf("no messages returned in response")
 	}
 
-	for _, item := range messagesMessages.Messages {
+	for _, item := range messages {
+		// fmt.Fprintf(gin.DefaultWriter, "item: %v\n", item)
 		doc, ok := GetDocFromMessage(item)
 		if !ok {
 			continue
 		}
 		docList = append(docList, doc)
 	}
-	// doc, ok :=  GetDocFromMessage(msgClass)
-	// // api.sear
-	// if err != nil {
-	// 	return
-	// }
-	return
+
+	return docList, nil
 }
 
 func DocGet(ctx context.Context, api *tg.Client, req *tg.MessagesGetHistoryRequest) (docs []*tg.Document, err error) {

@@ -5,21 +5,39 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"os"
+	"path/filepath"
 	"strconv"
 
 	"github.com/joho/godotenv"
 )
 
 const (
-	addr = `127.0.0.1`
+	appName = `privatestream`
+	addr    = `127.0.0.1`
 	// port = `30443`
 	port = `54821`
 
 	secretKeyURI    = `https://raw.githubusercontent.com/kissanjamgit/privatestream/master/key/enc.key`
 	secretChannelID = 3937047128
 
-	sessionStorage = `session.json`
+	// sessionStorage = `session.json`
 )
+
+func sessionPathGet() (path string, err error) {
+	userConfigDir, err := os.UserConfigDir()
+	if err != nil {
+		return
+	}
+	appConfigDir := filepath.Join(userConfigDir, appName)
+
+	err = os.MkdirAll(appConfigDir, os.ModePerm)
+	if err != nil {
+		return
+	}
+	path = filepath.Join(appConfigDir, `session.json`)
+	return
+}
 
 type Config struct {
 	Addr string
@@ -60,6 +78,10 @@ func NewConfig() (c *Config, err error) {
 	if err != nil {
 		return
 	}
+	sessionPath, err := sessionPathGet()
+	if err != nil {
+		return
+	}
 	config = &Config{
 		Addr:            addr,
 		Port:            port,
@@ -71,7 +93,7 @@ func NewConfig() (c *Config, err error) {
 			appID,
 			m[`appHash`],
 			m[`phoneNo`],
-			sessionStorage,
+			sessionPath,
 		},
 	}
 	c = config

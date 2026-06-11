@@ -15,11 +15,22 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/gotd/td/tg"
-	"github.com/kissanjamgit/private_stream/common"
-	"github.com/kissanjamgit/private_stream/config"
-	"github.com/kissanjamgit/private_stream/exp"
+	"github.com/kissanjamgit/privatestream/common"
+	"github.com/kissanjamgit/privatestream/config"
+	"github.com/kissanjamgit/privatestream/exp"
 	"golang.org/x/sync/errgroup"
 )
+
+func getFileName(doc *tg.Document) (attrFileName *tg.DocumentAttributeFilename, ok bool) {
+	for _, attr := range doc.GetAttributes() {
+		attrFileName, ok = attr.(*tg.DocumentAttributeFilename)
+		if !ok {
+			continue
+		}
+		break
+	}
+	return
+}
 
 var (
 	api *tg.Client
@@ -32,16 +43,16 @@ var (
 var regexpFieldRange = regexp.MustCompile(`bytes=(\d+)-(\d*)`)
 
 func MediaStream(c *gin.Context) {
+	filename := c.Param(`filename`)
+	docID, err := strconv.Atoi(c.Param(`docID`))
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{`error`: err.Error()})
+		return
+	}
+
 	channel, err := exp.GetChannel(c, api, cfg.SecretChannelID)
 	if err != nil {
 		c.JSON(http.StatusBadRequest, err)
-		return
-	}
-	filename := c.Param(`filename`)
-	_, tag, ok := strings.Cut(filename, `_`)
-	if !ok {
-		err = fmt.Errorf("strings.Cut(filename, `_`)")
-		c.JSON(http.StatusBadRequest, gin.H{`error`: err.Error()})
 		return
 	}
 	req := tg.MessagesSearchRequest{
@@ -49,11 +60,10 @@ func MediaStream(c *gin.Context) {
 			ChannelID:  channel.ID,
 			AccessHash: channel.AccessHash,
 		},
-		Q:      `_` + tag + `.ts`,
+		Q:      filename,
 		Limit:  1,
 		Filter: &tg.InputMessagesFilterEmpty{},
 	}
-
 	MessageInterface, err := api.MessagesSearch(ctx, &req)
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{`error`: err.Error()})
@@ -72,10 +82,34 @@ func MediaStream(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{`error`: err.Error()})
 		return
 	}
-	msg := msgList[0]
-	doc, ok := exp.GetDocFromMessage(msg)
+	doc, ok := exp.GetDocFromMessage(msgList[0])
 	if !ok {
 		err = fmt.Errorf(`msg.(*tg.Document) !ok`)
+		c.JSON(http.StatusBadRequest, gin.H{`error`: err.Error()})
+		return
+	}
+	if doc.ID != int64(docID) {
+		err = fmt.Errorf(`doc.ID != docID`)
+		c.JSON(http.StatusBadRequest, gin.H{`error`: err.Error()})
+		return
+	}
+	ok = false
+	var attrFileName *tg.DocumentAttributeFilename
+	for _, attr := range doc.GetAttributes() {
+		attrFileName, ok = attr.(*tg.DocumentAttributeFilename)
+		if !ok {
+			continue
+		}
+		if !strings.HasPrefix(attrFileName.FileName, filename) {
+			break
+		}
+		ok = true
+		break
+	}
+
+	fmt.Fprintf(gin.DefaultWriter, "attrFileName: %v, docSize: %d\n", attrFileName, doc.Size)
+	if !ok {
+		err = fmt.Errorf(`doc.GetAttributes() !ok`)
 		c.JSON(http.StatusBadRequest, gin.H{`error`: err.Error()})
 		return
 	}
@@ -141,12 +175,17 @@ func MediaStream(c *gin.Context) {
 }
 
 func fileNameExt(s string) (str string, err error) {
-	before, _, ok := strings.Cut(s, `_`)
-	if !ok {
-		err = fmt.Errorf(`strings.Cut(s, %q, %q) !ok`, " ", "")
+	if index := strings.LastIndex(s, `_`); index == -1 {
+		err = fmt.Errorf("index  :=  strings.LastIndex(s, `_`); index == -1 ")
 		return
+	} else {
+		s = s[:index]
 	}
-	ciphertext, err := base64.StdEncoding.DecodeString(before)
+
+	s = strings.ReplaceAll(s, `-`, `+`)
+	s = strings.ReplaceAll(s, `_`, `/`)
+
+	ciphertext, err := base64.StdEncoding.DecodeString(s)
 	if err != nil {
 		return
 	}
@@ -252,50 +291,97 @@ func ListPlaylist(c *gin.Context) {
 	}
 
 	c.Status(http.StatusOK)
-	c.Header("Content-Type", "application/octet-stream")
+	c.Header("Content-Type", "application/x-mpegURL")
 	c.Header("Content-Length", strconv.Itoa(buff.Len()))
 	c.Writer.WriteString(buff.String())
 }
 
 func GetMasterPlaylist(c *gin.Context) {
+	fmt.Fprintln(gin.DefaultWriter, "GetMasterPlaylist")
+	// docID, err := strconv.Atoi(c.Param(`docID`))
+	// if err != nil {
+	// 	return
+	// }
 	filaname := c.Param(`filename`)
-	_, tag, ok := strings.Cut(filaname, `_`)
-	if !ok {
-		err := fmt.Errorf(`strings.Cut(filename, %q, %q) !ok`, " ", "")
+
+	// fmt.Fprintf(gin.DefaultWriter, "channelID: %d", cfg.SecretChannelID)
+	channel, err := exp.GetChannel(c, api, cfg.SecretChannelID)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{`channelerror`: err.Error()})
+		return
+	}
+	// req := tg.ChannelsGetMessagesRequest{
+	// 	Channel: tg.InputChannelClass(&tg.InputChannel{
+	// 		ChannelID:  channel.ID,
+	// 		AccessHash: channel.AccessHash,
+	// 	}),
+	// 	ID: []tg.InputMessageClass{&tg.InputMessageID{ID: msgID}},
+	// }
+	// docs, err := exp.DocSearch(ctx, api, &req)
+	// if err != nil {
+	// 	c.JSON(http.StatusBadRequest, gin.H{`docerror`: err.Error()})
+	// 	return
+	// }
+	// if len(docs) != 1 {
+	// 	err = fmt.Errorf(`len(docs) != 1, len(doc): %d`, len(docs))
+	// 	c.JSON(http.StatusBadRequest, gin.H{`error`: err.Error()})
+	// 	return
+	// }
+	// doc := docs[0]
+
+	// _, tag, ok := strings.Cut(filaname, `_`)
+	// if !ok {
+	// 	err := fmt.Errorf(`strings.Cut(filename, %q, %q) !ok`, " ", "")
+	// 	c.JSON(http.StatusBadRequest, gin.H{`error`: err.Error()})
+	// 	return
+	// }
+	sa, err := fileNameExt(filaname)
+	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{`error`: err.Error()})
 		return
 	}
-	channel, err := exp.GetChannel(c, api, cfg.SecretChannelID)
-	if err != nil {
-		c.JSON(http.StatusBadRequest, err)
-		return
-	}
+	tag := strings.TrimPrefix(filaname, sa)
 	req := tg.MessagesSearchRequest{
 		Peer: &tg.InputPeerChannel{
 			ChannelID:  channel.ID,
 			AccessHash: channel.AccessHash,
 		},
-		Q:      `_` + tag + `.m3u8`,
+		Q:      tag,
 		Limit:  1,
 		Filter: &tg.InputMessagesFilterEmpty{},
 	}
 
 	MessageInterface, err := api.MessagesSearch(ctx, &req)
 	if err != nil {
-		c.JSON(http.StatusBadRequest, err)
+		c.JSON(http.StatusBadRequest, gin.H{`error`: err.Error()})
 		return
 	}
 	arr := MessageInterface.(*tg.MessagesChannelMessages)
 	if len(arr.Messages) == 0 {
-		c.JSON(http.StatusBadRequest, fmt.Errorf(`len(arr.Messages) == 0`))
-		return
-	}
-	doc, ok := exp.GetDocFromMessage(arr.Messages[0])
-	if !ok {
-		c.JSON(http.StatusBadRequest, fmt.Errorf(`arr.Messages[0].(*tg.Document) !ok`))
+		err = fmt.Errorf(`len(arr.Messages) == 0`)
+		c.JSON(http.StatusBadRequest, gin.H{`error`: err.Error()})
 		return
 	}
 
+	doc, ok := exp.GetDocFromMessage(arr.Messages[0])
+	if !ok {
+		err = fmt.Errorf(`arr.Messages[0].(*tg.Document) !ok`)
+		c.JSON(http.StatusBadRequest, gin.H{`error`: err.Error()})
+		return
+	}
+	fmt.Printf("docSize: %d\n", doc.Size)
+
+	// attrFileName, ok := getFileName(doc)
+	// if !ok {
+	// 	err = fmt.Errorf(`getFileName(doc) !ok`)
+	// 	c.JSON(http.StatusBadRequest, gin.H{`error`: err.Error()})
+	// 	return
+	// }
+	// if !strings.HasPrefix(attrFileName.FileName, filaname) {
+	// 	err = fmt.Errorf(`!strings.HasPrefix(attrFileName.FileName, filaname), attrFileName: %v`, attrFileName)
+	// 	c.JSON(http.StatusBadRequest, gin.H{`error`: err.Error()})
+	// 	return
+	// }
 	location := &tg.InputDocumentFileLocation{
 		ID:            doc.GetID(),
 		AccessHash:    doc.GetAccessHash(),

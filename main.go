@@ -12,9 +12,9 @@ import (
 	"github.com/gotd/td/telegram"
 	"github.com/gotd/td/telegram/auth"
 	"github.com/gotd/td/tg"
-	"github.com/kissanjamgit/private_stream/config"
-	"github.com/kissanjamgit/private_stream/keyredirect"
-	"github.com/kissanjamgit/private_stream/secretservice"
+	"github.com/kissanjamgit/privatestream/config"
+	"github.com/kissanjamgit/privatestream/keyredirect"
+	"github.com/kissanjamgit/privatestream/secretservice"
 )
 
 var codeHook = auth.CodeAuthenticatorFunc(func(ctx context.Context, sentCode *tg.AuthSentCode) (string, error) {
@@ -50,6 +50,7 @@ func block() (err error) {
 		engin := gin.New()
 		err = secretservice.Add(engin, api, ctx, config)
 		keyredirect.Add(engin, config)
+		// getJoinedChannels(ctx, api)
 
 		engin.Run(config.Addr + `:` + config.Port)
 		return
@@ -61,5 +62,27 @@ func main() {
 	err := block()
 	if err != nil {
 		panic(err)
+	}
+}
+
+func getJoinedChannels(ctx context.Context, api *tg.Client) {
+	// Fetch the user's dialogs (chats)
+	dialogs, err := api.MessagesGetDialogs(ctx, &tg.MessagesGetDialogsRequest{
+		OffsetPeer: &tg.InputPeerEmpty{},
+		Limit:      100, // Adjust your limit as needed
+	})
+	if err != nil {
+		fmt.Fprintf(gin.DefaultWriter, "Failed to get dialogs: %v", err)
+	}
+
+	// The response can be one of multiple types; type-switch to extract chats
+	switch modifiedDialogs := dialogs.(type) {
+	case *tg.MessagesDialogs:
+		for _, chat := range modifiedDialogs.Chats {
+			if channel, ok := chat.(*tg.Channel); ok {
+				fmt.Fprintf(gin.DefaultWriter, "Channel Name: %s | ID: %d | AccessHash: %d\n",
+					channel.Title, channel.ID, channel.AccessHash)
+			}
+		}
 	}
 }

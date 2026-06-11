@@ -1,4 +1,4 @@
-module github.com/kissanjamgit/private_stream
+module github.com/kissanjamgit/privatestream
 
 go 1.25.1
 
