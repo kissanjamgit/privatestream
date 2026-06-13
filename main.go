@@ -25,11 +25,14 @@ func block() (err error) {
 	cbrCmd := cli.New(cfg, mtp.MtpRun, signalContext)
 	err = cbrCmd.Execute()
 	if err != nil {
-		return
+		return nil
 	}
 	return
 }
 
 func main() {
-	_ = block()
+	err := block()
+	if err != nil {
+		panic(err)
+	}
 }

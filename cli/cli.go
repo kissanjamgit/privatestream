@@ -65,7 +65,7 @@ var RunEPlay = func(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return err
 	}
-	execCmd := exec.Command(cfg.Player, cfg.PlayerArgs...)
+	execCmd := exec.Command(cfg.Path, cfg.PlayerArgs...)
 	stdin, err := execCmd.StdinPipe()
 	if err != nil {
 		return err
@@ -98,7 +98,20 @@ var RunEPlay = func(cmd *cobra.Command, args []string) error {
 }
 
 var RunEhostkey = func(cmd *cobra.Command, args []string) error {
-	return nil
+	engin := gin.New()
+	keyredirect.Add(engin, cfg)
+	srv := &http.Server{Addr: cfg.Addr + `:` + cfg.Port, Handler: engin}
+	go func() {
+		<-signalContext.Done()
+		srv.Shutdown(context.Background())
+	}()
+	err := srv.ListenAndServe()
+	if errors.Is(err, http.ErrServerClosed) {
+		fmt.Fprintln(gin.DefaultWriter, `gin engin shutdown`)
+		return nil
+	}
+
+	return err
 }
 
 var RunEtoolEncryptAESBase64URLSafe = func(cmd *cobra.Command, args []string) error {
